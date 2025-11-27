@@ -1,115 +1,52 @@
 const express = require('express');
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const helmet = require('helmet');
+const cors = require('cors');
+const morgan = require('morgan');
+const connectDB = require('./config/database');
+const userRoutes = require('./routes/userRoutes');
+const { generalLimiter } = require('./middleware/rateLimiter');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(express.json());
+connectDB();
 
-// MongoDB Connection (removed deprecated options)
-mongoose.connect(process.env.MONGODB_URI)
-.then(() => console.log('MongoDB connected successfully'))
-.catch(err => console.error('MongoDB connection error:', err));
+app.use(helmet());
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
 
-// User Schema
-const userSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true,
-    unique: true
-  },
-  email: {
-    type: String,
-    required: true,
-    unique: true
-  },
-  password: {
-    type: String,
-    required: true
-  }
-}, { timestamps: true });
+if (process.env.NODE_ENV === 'development') {
+  app.use(morgan('dev'));
+} else {
+  app.use(morgan('combined'));
+}
 
-const User = mongoose.model('User', userSchema);
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/api/', generalLimiter);
 
-// Routes
 app.get('/', (req, res) => {
-  res.json({ message: 'User Management Service is running!' });
+  res.json({ message: 'User Management Service is running!', version: '1.0.0', status: 'healthy', timestamp: new Date().toISOString() });
 });
 
-// User Registration
-app.post('/api/users/register', async (req, res) => {
-  try {
-    const { username, email, password } = req.body;
-
-    // Check if user already exists
-    const existingUser = await User.findOne({ $or: [{ email }, { username }] });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User already exists' });
-    }
-
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create new user
-    const user = new User({
-      username,
-      email,
-      password: hashedPassword
-    });
-
-    await user.save();
-
-    res.status(201).json({ message: 'User registered successfully' });
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({ message: 'Error registering user', error: error.message });
-  }
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'OK', uptime: process.uptime(), timestamp: new Date().toISOString() });
 });
 
-// User Login
-app.post('/api/users/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
+app.use('/api/users', userRoutes);
 
-    // Find user
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // Check password
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-    if (!isPasswordValid) {
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '24h' }
-    );
-
-    res.status(200).json({ 
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email
-      }
-    });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Error logging in', error: error.message });
-  }
+app.use((req, res) => {
+  res.status(404).json({ message: 'Route not found', path: req.path, method: req.method });
 });
 
-// Start server
+app.use((err, req, res, next) => {
+  console.error('Error:', err.stack);
+  res.status(err.status || 500).json({ message: err.message || 'Something went wrong!', ...(process.env.NODE_ENV === 'development' && { stack: err.stack }) });
+});
+
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });
+
+module.exports = app;
