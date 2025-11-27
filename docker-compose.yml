@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # Node.js Application
+  user-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: user-management-service
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=production
+      - PORT=5000
+      - MONGODB_URI=mongodb://mongo:27017/user-management
+      - JWT_SECRET=${JWT_SECRET:-lFzF5Op7J8kuaXch1DUCOWVR}
+      - FRONTEND_URL=http://localhost:3000
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # MongoDB Database
+  mongo:
+    image: mongo:4.4
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=user-management
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+# Named volumes for data persistence
+volumes:
+  mongo-data:
+    driver: local
+
+# Network for service communication
+networks:
+  app-network:
+    driver: bridge
